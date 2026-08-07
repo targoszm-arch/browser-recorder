@@ -64,7 +64,10 @@ async function startRecording(options = {}) {
   if (state.recording) return { ok: false, error: 'A recording is already running.' };
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id || !/^https?:/.test(tab.url || '')) throw new Error('Open a normal web page before recording.');
-  await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content.js'] });
+  // allFrames is required so clicks inside same-origin AND cross-origin iframes are captured too —
+  // many interactive apps (canvas/design tools, embedded editors) render their real UI in an iframe,
+  // and a main-frame-only injection would silently record zero steps for the whole session.
+  await chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, files: ['content.js'] });
   const id = crypto.randomUUID();
   const includeVoice = options.includeVoice !== false;
   state.recording = true;
