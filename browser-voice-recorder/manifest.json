@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Workflow Voice Recorder",
+  "version": "0.1.0",
+  "description": "Record browser workflows with per-step screenshots and voice-to-text narration; export a formatted HTML guide, Playwright spec, or DevTools Recorder JSON.",
+  "minimum_chrome_version": "116",
+  "permissions": ["activeTab", "scripting", "storage", "unlimitedStorage", "tabs", "downloads"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_title": "Workflow Voice Recorder", "default_popup": "popup.html" },
+  "commands": {
+    "toggle-recording": {
+      "suggested_key": { "default": "Alt+Shift+R", "mac": "Alt+Shift+R" },
+      "description": "Start or stop recording"
+    }
+  }
+}

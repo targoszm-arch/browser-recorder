@@ -1,0 +1,19 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="styles.css"></head><body><main class="review">
+  <header>
+    <div><h1 id="title">Recording</h1><p id="meta" class="muted"></p></div>
+    <div class="exports">
+      <button id="exportHtml">Export HTML Guide</button>
+      <button id="exportMarkdown" class="secondary">Export Markdown</button>
+      <button id="exportText" class="secondary">Export Text</button>
+      <button id="playwright" class="secondary">Export Playwright</button>
+      <button id="devtools" class="secondary">Export DevTools JSON</button>
+    </div>
+  </header>
+  <section class="card" id="formatting">
+    <h2>Format the guide</h2>
+    <label>Guide title<input type="text" id="docTitle" placeholder="Workflow title"></label>
+    <label>Intro paragraph<textarea id="docIntro" rows="2"></textarea></label>
+    <label>Outro paragraph<textarea id="docOutro" rows="2"></textarea></label>
+  </section>
+  <section class="card"><h2>Steps</h2><p class="muted">Each step's screenshot was captured automatically. Edit the title and narration, reorder or remove steps, then export.</p><ol id="steps"></ol></section>
+</main><script src="review.js"></script></body></html>
