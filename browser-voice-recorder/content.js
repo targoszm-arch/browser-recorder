@@ -5,10 +5,14 @@
   let lastUrl = location.href;
   let recognizer = null;
 
+  // Content script is injected into every frame (including iframes) so clicks inside embedded
+  // canvases/editors are captured, but narration should only be transcribed once per tab.
+  const isTopFrame = window.top === window;
+
   chrome.runtime.onMessage.addListener((message) => {
     if (message.type === 'RECORDER_STATE') {
       recording = message.recording;
-      recording && message.includeVoice ? startNarration() : stopNarration();
+      if (isTopFrame) recording && message.includeVoice ? startNarration() : stopNarration();
     }
   });
 

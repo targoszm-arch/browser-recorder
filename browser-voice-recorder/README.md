@@ -47,15 +47,30 @@ automation scripts instead.
 ## Current scope
 
 The recorder captures clicks, changed form values, select changes, Enter/Escape/Tab keys, submissions,
-and same-tab URL changes, each paired with a screenshot of the visible tab at that moment. It masks
-password and credit-card autocomplete fields. Narration transcription requires a Chromium build with
-the Web Speech API (`webkitSpeechRecognition`) and an active microphone permission grant for the page;
-if unavailable, steps simply have no pre-filled description and can be typed in manually.
+and same-tab URL changes, in the page and in every iframe on it (so canvas/design tools and embedded
+editors are covered, not just the top-level document), each paired with a screenshot of the visible tab
+at that moment. It masks password and credit-card autocomplete fields. Narration transcription requires
+a Chromium build with the Web Speech API (`webkitSpeechRecognition`) and an active microphone permission
+grant for the page (only requested once, from the top frame); if unavailable, steps simply have no
+pre-filled description and can be typed in manually.
+
+## Troubleshooting
+
+**"0 steps" after stopping a recording** — the session (title/duration/URL) is saved but no clicks were
+captured. Usually one of:
+
+- The page's interactive content lives inside a `<canvas>`-based widget that doesn't dispatch real
+  `click`/`change` DOM events (rare, but some drag-only design tools do this).
+- The extension was reloaded/updated in `chrome://extensions` *after* the tab was already open — Chrome
+  won't re-inject a fresh content script into an existing tab. Refresh the target page after updating the
+  extension, then start recording again.
+- You recorded on a `chrome://`, `chrome-extension://`, or Chrome Web Store page — these are off-limits
+  to content scripts by design; use a normal `http(s)://` page.
 
 ## Production hardening backlog
 
 - IndexedDB session store and recovery after service-worker restart
-- File upload, drag/drop, native dialog, iframe and shadow-DOM handling
+- File upload, drag/drop, native dialog and shadow-DOM handling
 - Locator scoring with role/text/test-id fallbacks
 - Drag-and-drop step reordering and thumbnail re-cropping in the review UI
 - Automated Chrome Web Store packaging, privacy disclosures and end-to-end tests
