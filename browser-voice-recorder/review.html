@@ -1,19 +1,40 @@
-<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="styles.css"></head><body><main class="review">
-  <header>
-    <div><h1 id="title">Recording</h1><p id="meta" class="muted"></p></div>
-    <div class="exports">
-      <button id="exportHtml">Export HTML Guide</button>
-      <button id="exportMarkdown" class="secondary">Export Markdown</button>
-      <button id="exportText" class="secondary">Export Text</button>
-      <button id="playwright" class="secondary">Export Playwright</button>
-      <button id="devtools" class="secondary">Export DevTools JSON</button>
-    </div>
-  </header>
-  <section class="card" id="formatting">
-    <h2>Format the guide</h2>
-    <label>Guide title<input type="text" id="docTitle" placeholder="Workflow title"></label>
-    <label>Intro paragraph<textarea id="docIntro" rows="2"></textarea></label>
-    <label>Outro paragraph<textarea id="docOutro" rows="2"></textarea></label>
-  </section>
-  <section class="card"><h2>Steps</h2><p class="muted">Each step's screenshot was captured automatically. Edit the title and narration, reorder or remove steps, then export.</p><ol id="steps"></ol></section>
-</main><script src="review.js"></script></body></html>
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="styles.css"></head><body>
+<div class="app">
+  <aside class="library">
+    <div class="library-header"><h2>Recordings</h2></div>
+    <div id="libraryList" class="library-list"></div>
+  </aside>
+  <main class="review">
+    <header>
+      <div><h1 id="title">Recording</h1><p id="meta" class="muted"></p></div>
+      <div class="exports">
+        <button id="exportHtml" class="primary">Export HTML Guide</button>
+        <div class="dropdown">
+          <button id="moreFormatsBtn" class="chip">More formats <span class="caret">▾</span></button>
+          <div id="moreFormatsMenu" class="dropdown-menu hidden">
+            <button id="exportMarkdown">Markdown (.md)</button>
+            <button id="exportText">Text (.txt)</button>
+            <button id="playwright">Playwright (.spec.ts)</button>
+            <button id="devtools">DevTools JSON (.devtools.json)</button>
+          </div>
+        </div>
+      </div>
+    </header>
+    <section class="card" id="formatting">
+      <h2>Format the guide</h2>
+      <label>Guide title<input type="text" id="docTitle" placeholder="Workflow title"></label>
+      <label>Intro paragraph<textarea id="docIntro" rows="2"></textarea></label>
+      <label>Outro paragraph<textarea id="docOutro" rows="2"></textarea></label>
+    </section>
+    <section class="card">
+      <h2>Steps</h2>
+      <p class="muted">Each step's screenshot was captured automatically. Click a screenshot to enlarge it. Edit the title and narration, reorder or remove steps, then export.</p>
+      <ol id="steps"></ol>
+    </section>
+  </main>
+</div>
+<div id="lightbox" class="lightbox hidden">
+  <button id="lightboxClose" class="lightbox-close" aria-label="Close">×</button>
+  <img id="lightboxImg" alt="">
+</div>
+<script src="review.js"></script></body></html>

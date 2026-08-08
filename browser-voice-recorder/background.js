@@ -1,7 +1,8 @@
 const state = { recording: false, tabId: null, session: null };
+const MAX_LIBRARY_ENTRIES = 50;
 
 chrome.runtime.onInstalled.addListener(async ({ reason }) => {
-  if (reason === 'install') await chrome.storage.local.set({ latestSession: null });
+  if (reason === 'install') await chrome.storage.local.set({ sessionIndex: [] });
 });
 
 chrome.commands.onCommand.addListener((command) => {
@@ -14,6 +15,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'GET_STATE') return { recording: state.recording, session: state.session };
     if (message.type === 'START') return startRecording(message.options || {});
     if (message.type === 'STOP') return stopRecording();
+    if (message.type === 'GET_LIBRARY') {
+      const { sessionIndex, latestSessionId } = await chrome.storage.local.get(['sessionIndex', 'latestSessionId']);
+      return { index: sessionIndex || [], latestSessionId: latestSessionId || null };
+    }
+    if (message.type === 'GET_SESSION') {
+      const key = `session:${message.id}`;
+      const stored = await chrome.storage.local.get(key);
+      return { session: stored[key] || null };
+    }
+    if (message.type === 'DELETE_SESSION') {
+      await deleteSessionFromLibrary(message.id);
+      return { ok: true };
+    }
     if (message.type === 'EVENT' && state.recording && sender.tab?.id === state.tabId) {
       const offsetMs = Date.now() - state.session.startedAt;
       if (message.event.action === 'narration') {
@@ -23,7 +37,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         step.screenshot = await captureStepScreenshot(sender.tab);
         state.session.steps.push(step);
       }
-      await chrome.storage.local.set({ latestSession: state.session });
+      // Persisted under its own key (not just the crash-recovery activeSession blob) so the
+      // review page can load an in-progress session if it's opened mid-recording.
+      await chrome.storage.local.set({ [`session:${state.session.id}`]: state.session });
       await persistActiveState();
       return { ok: true };
     }
@@ -60,6 +76,32 @@ async function persistActiveState() {
   return chrome.storage.local.set({ activeSession: { tabId: state.tabId, session: state.session } });
 }
 
+// The recordings library is a small index (title/step count/size) plus one storage key per full
+// session, so the review page's sidebar can list everything without loading every screenshot.
+async function saveSessionToLibrary(session) {
+  const key = `session:${session.id}`;
+  await chrome.storage.local.set({ [key]: session });
+  const { sessionIndex } = await chrome.storage.local.get('sessionIndex');
+  const index = (sessionIndex || []).filter((entry) => entry.id !== session.id);
+  index.unshift({
+    id: session.id,
+    title: session.title,
+    stepCount: session.steps.length,
+    sizeBytes: JSON.stringify(session).length,
+    startedAt: session.startedAt,
+  });
+  const overflow = index.splice(MAX_LIBRARY_ENTRIES);
+  await Promise.all(overflow.map((entry) => chrome.storage.local.remove(`session:${entry.id}`)));
+  await chrome.storage.local.set({ sessionIndex: index, latestSessionId: session.id });
+}
+
+async function deleteSessionFromLibrary(id) {
+  const { sessionIndex, latestSessionId } = await chrome.storage.local.get(['sessionIndex', 'latestSessionId']);
+  await chrome.storage.local.remove(`session:${id}`);
+  await chrome.storage.local.set({ sessionIndex: (sessionIndex || []).filter((entry) => entry.id !== id) });
+  if (latestSessionId === id) await chrome.storage.local.remove('latestSessionId');
+}
+
 async function startRecording(options = {}) {
   if (state.recording) return { ok: false, error: 'A recording is already running.' };
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -73,7 +115,7 @@ async function startRecording(options = {}) {
   state.recording = true;
   state.tabId = tab.id;
   state.session = { id, title: options.title || tab.title || 'Browser workflow', startedAt: Date.now(), startUrl: tab.url, includeVoice, steps: [], transcript: [] };
-  await chrome.storage.local.set({ latestSession: state.session, recordingTabId: tab.id });
+  await chrome.storage.local.set({ [`session:${id}`]: state.session, recordingTabId: tab.id });
   await persistActiveState();
   await chrome.tabs.sendMessage(tab.id, { type: 'RECORDER_STATE', recording: true, includeVoice });
   await chrome.action.setBadgeText({ text: 'REC', tabId: tab.id });
@@ -87,7 +129,7 @@ async function stopRecording() {
   const tabId = state.tabId;
   state.session.endedAt = Date.now();
   state.session.durationMs = state.session.endedAt - state.session.startedAt;
-  await chrome.storage.local.set({ latestSession: state.session });
+  await saveSessionToLibrary(state.session);
   try { await chrome.tabs.sendMessage(tabId, { type: 'RECORDER_STATE', recording: false }); } catch {}
   await chrome.action.setBadgeText({ text: '', tabId });
   state.recording = false;

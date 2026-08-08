@@ -1,15 +1,30 @@
-let session;
+let session = null;
+let libraryIndex = [];
+let latestSessionId = null;
+
 const q = (value) => JSON.stringify(value ?? '');
 const slug = (value) => (value || 'workflow').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
 const escapeHtml = (value) => { const el = document.createElement('span'); el.textContent = value ?? ''; return el.innerHTML; };
+const ACTION_LABELS = { click: 'Click', fill: 'Fill', select: 'Select', key: 'Key', submit: 'Submit', navigate: 'Navigation' };
+const actionLabel = (step) => (ACTION_LABELS[step.action] || step.action || '').toUpperCase();
+const effectiveValue = (step) => (step.sensitive ? '<REDACTED>' : step.value);
+
+function formatBytes(n) {
+  if (!n) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = n, i = 0;
+  while (value >= 1024 && i < units.length - 1) { value /= 1024; i++; }
+  return `${i > 0 && value < 10 ? value.toFixed(1) : Math.round(value)} ${units[i]}`;
+}
 
 function playwright(s) {
   const lines = [`import { test, expect } from '@playwright/test';`, '', `test(${q(s.title)}, async ({ page }) => {`, `  await page.goto(${q(s.startUrl)});`];
   for (const step of s.steps) {
+    const value = effectiveValue(step);
     if (step.action === 'click') lines.push(`  await page.locator(${q(step.selector)}).click();`);
-    if (step.action === 'fill' && step.value !== '<REDACTED>') lines.push(`  await page.locator(${q(step.selector)}).fill(${q(step.value)});`);
-    if (step.action === 'fill' && step.value === '<REDACTED>') lines.push(`  await page.locator(${q(step.selector)}).fill(process.env.RECORDED_SECRET ?? '');`);
-    if (step.action === 'select') lines.push(`  await page.locator(${q(step.selector)}).selectOption(${q(step.value)});`);
+    if (step.action === 'fill' && value !== '<REDACTED>') lines.push(`  await page.locator(${q(step.selector)}).fill(${q(value)});`);
+    if (step.action === 'fill' && value === '<REDACTED>') lines.push(`  await page.locator(${q(step.selector)}).fill(process.env.RECORDED_SECRET ?? '');`);
+    if (step.action === 'select') lines.push(`  await page.locator(${q(step.selector)}).selectOption(${q(value)});`);
     if (step.action === 'key') lines.push(`  await page.locator(${q(step.selector)}).press(${q(step.key)});`);
     if (step.action === 'navigate') lines.push(`  await page.waitForURL(${q(step.value)});`);
   }
@@ -20,9 +35,10 @@ function devtools(s) {
   const steps = [{ type: 'navigate', url: s.startUrl, assertedEvents: [{ type: 'navigation', url: s.startUrl, title: s.title }] }];
   for (const step of s.steps) {
     const selectors = [[step.selector || 'body']];
+    const value = effectiveValue(step);
     if (step.action === 'click') steps.push({ type: 'click', target: 'main', selectors, offsetX: 1, offsetY: 1 });
-    if (step.action === 'fill') steps.push({ type: 'change', value: step.value === '<REDACTED>' ? '' : step.value, selectors, target: 'main' });
-    if (step.action === 'select') steps.push({ type: 'change', value: step.value, selectors, target: 'main' });
+    if (step.action === 'fill') steps.push({ type: 'change', value: value === '<REDACTED>' ? '' : value, selectors, target: 'main' });
+    if (step.action === 'select') steps.push({ type: 'change', value, selectors, target: 'main' });
     if (step.action === 'key') steps.push({ type: 'keyDown', key: step.key, target: 'main' });
     if (step.action === 'navigate') steps.push({ type: 'navigate', url: step.value });
   }
@@ -30,14 +46,15 @@ function devtools(s) {
 }
 
 function labelOf(step) {
-  return step.name || step.selector || step.value || step.tag || 'this element';
+  return step.name || step.selector || effectiveValue(step) || step.tag || 'this element';
 }
 
 function autoTitle(step) {
+  const value = effectiveValue(step);
   switch (step.action) {
     case 'click': return `Click ${labelOf(step)}.`;
-    case 'fill': return step.value === '<REDACTED>' ? `Fill in ${labelOf(step)}.` : `Type "${step.value}" into ${labelOf(step)}.`;
-    case 'select': return `Select "${step.value}" from ${labelOf(step)}.`;
+    case 'fill': return value === '<REDACTED>' ? `Fill in ${labelOf(step)}.` : `Type "${value}" into ${labelOf(step)}.`;
+    case 'select': return `Select "${value}" from ${labelOf(step)}.`;
     case 'key': return `Press ${step.key} on ${labelOf(step)}.`;
     case 'submit': return `Submit the form.`;
     case 'navigate': return `Navigate to ${step.value}.`;
@@ -61,20 +78,42 @@ function render() {
   document.querySelector('#meta').textContent = `${session.steps.length} steps · ${Math.round((session.durationMs || 0) / 1000)} seconds · ${session.startUrl}`;
   document.querySelector('#docTitle').value = session.title;
   const list = document.querySelector('#steps');
-  list.innerHTML = session.steps.map((step, i) => `
+  const total = session.steps.length;
+  list.innerHTML = session.steps.map((step, i) => {
+    const title = step.editTitle ?? (step.editTitle = autoTitle(step));
+    const desc = step.editDesc ?? (step.editDesc = narrationFor(step, i));
+    return `
     <li class="step-edit" data-index="${i}">
-      <div class="step-edit-shot">${step.screenshot ? `<img src="${step.screenshot}" alt="">` : `<div class="no-shot">no screenshot</div>`}</div>
-      <div class="step-edit-fields">
-        <div class="step-edit-meta"><span>${escapeHtml(step.action)}</span><small>${(step.offsetMs / 1000).toFixed(1)}s</small></div>
-        <label>Step title<input type="text" class="step-title" value="${escapeHtml(step.editTitle ?? (step.editTitle = autoTitle(step)))}"></label>
-        <label>Narration (from voice transcription)<textarea class="step-desc" rows="2" placeholder="Say what you're doing while recording, or type it here">${escapeHtml(step.editDesc ?? (step.editDesc = narrationFor(step, i)))}</textarea></label>
+      <div class="step-shot">
+        ${step.screenshot
+          ? `<img class="zoomable" src="${step.screenshot}" alt="${escapeHtml(title)}"><span class="zoom-hint">🔍 Click to enlarge</span>`
+          : `<div class="no-shot">No screenshot</div>`}
       </div>
-      <div class="step-edit-actions">
-        <button data-act="up" title="Move up">↑</button>
-        <button data-act="down" title="Move down">↓</button>
-        <button data-act="remove" class="danger" title="Remove step">Remove</button>
+      <div class="step-body">
+        <div class="step-eyebrow">
+          <span class="step-badge">${escapeHtml(actionLabel(step))}</span>
+          <span class="step-count">Step ${i + 1} of ${total}</span>
+        </div>
+        <label>Title<input type="text" class="step-title" value="${escapeHtml(title)}"></label>
+        <label>Narration (from voice transcription)<textarea class="step-desc" rows="2" placeholder="Say what you're doing while recording, or type it here">${escapeHtml(desc)}</textarea></label>
+        <label class="chip-toggle"><input type="checkbox" class="step-sensitive" ${step.sensitive ? 'checked' : ''}> Sensitive (redact value in exports)</label>
+        ${step.url ? `<div class="step-url"><span>URL</span><code>${escapeHtml(step.url)}</code></div>` : ''}
+        <details class="locator">
+          <summary>Locator</summary>
+          <div class="locator-body">
+            <div><span>Selector</span><code>${escapeHtml(step.selector || '—')}</code></div>
+            ${step.name ? `<div><span>Name</span><code>${escapeHtml(step.name)}</code></div>` : ''}
+            ${step.tag ? `<div><span>Tag</span><code>${escapeHtml(step.tag)}</code></div>` : ''}
+          </div>
+        </details>
+        <div class="step-actions">
+          <button data-act="up">Move up</button>
+          <button data-act="down">Move down</button>
+          <button data-act="remove" class="danger">Delete</button>
+        </div>
       </div>
-    </li>`).join('');
+    </li>`;
+  }).join('');
 }
 
 function bindListEvents() {
@@ -85,8 +124,11 @@ function bindListEvents() {
     const step = session.steps[Number(li.dataset.index)];
     if (e.target.classList.contains('step-title')) step.editTitle = e.target.value;
     if (e.target.classList.contains('step-desc')) step.editDesc = e.target.value;
+    if (e.target.classList.contains('step-sensitive')) step.sensitive = e.target.checked;
   });
   list.addEventListener('click', (e) => {
+    const img = e.target.closest('img.zoomable');
+    if (img) { openLightbox(img.src, img.alt); return; }
     const button = e.target.closest('button[data-act]');
     if (!button) return;
     const li = button.closest('.step-edit');
@@ -96,6 +138,97 @@ function bindListEvents() {
     if (button.dataset.act === 'down' && index < session.steps.length - 1) [session.steps[index + 1], session.steps[index]] = [session.steps[index], session.steps[index + 1]];
     render();
   });
+}
+
+function openLightbox(src, alt) {
+  document.querySelector('#lightboxImg').src = src;
+  document.querySelector('#lightboxImg').alt = alt || '';
+  document.querySelector('#lightbox').classList.remove('hidden');
+}
+
+function closeLightbox() {
+  document.querySelector('#lightbox').classList.add('hidden');
+  document.querySelector('#lightboxImg').src = '';
+}
+
+function bindLightbox() {
+  document.querySelector('#lightboxClose').addEventListener('click', closeLightbox);
+  document.querySelector('#lightbox').addEventListener('click', (e) => { if (e.target.id === 'lightbox') closeLightbox(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeLightbox(); });
+}
+
+function bindFormatsMenu() {
+  const button = document.querySelector('#moreFormatsBtn');
+  const menu = document.querySelector('#moreFormatsMenu');
+  button.addEventListener('click', (e) => { e.stopPropagation(); menu.classList.toggle('hidden'); });
+  menu.addEventListener('click', (e) => e.stopPropagation());
+  document.addEventListener('click', () => menu.classList.add('hidden'));
+}
+
+// --- Recordings library (sidebar) ---
+
+async function loadLibrary() {
+  const res = await chrome.runtime.sendMessage({ type: 'GET_LIBRARY' });
+  libraryIndex = res.index || [];
+  latestSessionId = res.latestSessionId || null;
+  renderLibrary();
+}
+
+function renderLibrary() {
+  const list = document.querySelector('#libraryList');
+  if (!libraryIndex.length) {
+    list.innerHTML = `<p class="muted library-empty">No recordings yet.</p>`;
+    return;
+  }
+  list.innerHTML = libraryIndex.map((entry) => `
+    <div class="library-item ${session?.id === entry.id ? 'active' : ''}" data-id="${entry.id}">
+      <button class="library-select" data-id="${entry.id}">
+        <span class="library-title">${escapeHtml(entry.title)}</span>
+        <span class="library-meta">${entry.stepCount} steps · ${formatBytes(entry.sizeBytes)}</span>
+      </button>
+      <button class="library-delete" data-id="${entry.id}" title="Delete recording">×</button>
+    </div>`).join('');
+}
+
+function bindLibraryEvents() {
+  document.querySelector('#libraryList').addEventListener('click', async (e) => {
+    const del = e.target.closest('.library-delete');
+    if (del) {
+      e.stopPropagation();
+      const deletedId = del.dataset.id;
+      const wasActive = session?.id === deletedId;
+      await chrome.runtime.sendMessage({ type: 'DELETE_SESSION', id: deletedId });
+      await loadLibrary();
+      if (wasActive) {
+        if (libraryIndex.length) await selectSession(libraryIndex[0].id);
+        else { session = null; showEmptyState(); }
+      }
+      return;
+    }
+    const item = e.target.closest('.library-item');
+    if (item) await selectSession(item.dataset.id);
+  });
+}
+
+async function selectSession(id) {
+  const res = await chrome.runtime.sendMessage({ type: 'GET_SESSION', id });
+  if (!res.session) { session = null; showEmptyState(); return; }
+  session = res.session;
+  session.transcript = session.transcript || [];
+  document.querySelector('.exports').style.display = '';
+  document.querySelector('#formatting').style.display = '';
+  document.querySelector('#docIntro').value = `Follow these steps to complete: ${session.title}.`;
+  document.querySelector('#docOutro').value = `You've successfully completed ${session.title}.`;
+  render();
+  renderLibrary();
+}
+
+function showEmptyState() {
+  document.querySelector('#title').textContent = libraryIndex.length ? 'Select a recording' : 'No recordings yet';
+  document.querySelector('#meta').textContent = '';
+  document.querySelector('.exports').style.display = 'none';
+  document.querySelector('#formatting').style.display = 'none';
+  document.querySelector('#steps').innerHTML = '';
 }
 
 function htmlGuide() {
@@ -233,22 +366,21 @@ async function download(filename, body, mime) {
 }
 
 (async () => {
-  session = (await chrome.storage.local.get('latestSession')).latestSession;
-  if (!session) {
-    document.querySelector('#title').textContent = 'No recording yet';
-    document.querySelector('.exports').style.display = 'none';
-    document.querySelector('#formatting').style.display = 'none';
-    return;
-  }
-  session.transcript = session.transcript || [];
-  document.querySelector('#docIntro').value = `Follow these steps to complete: ${session.title}.`;
-  document.querySelector('#docOutro').value = `You've successfully completed ${session.title}.`;
-  render();
   bindListEvents();
+  bindLibraryEvents();
+  bindLightbox();
+  bindFormatsMenu();
+  await loadLibrary();
+  if (libraryIndex.length) {
+    const preferred = latestSessionId && libraryIndex.some((e) => e.id === latestSessionId) ? latestSessionId : libraryIndex[0].id;
+    await selectSession(preferred);
+  } else {
+    showEmptyState();
+  }
 })();
 
-document.querySelector('#playwright')?.addEventListener('click', () => download(`${slug(session.title)}.spec.ts`, playwright(session), 'text/typescript'));
-document.querySelector('#devtools')?.addEventListener('click', () => download(`${slug(session.title)}.devtools.json`, devtools(session), 'application/json'));
-document.querySelector('#exportHtml')?.addEventListener('click', () => download(`${slug(document.querySelector('#docTitle').value || session.title)}.html`, htmlGuide(), 'text/html'));
-document.querySelector('#exportMarkdown')?.addEventListener('click', () => download(`${slug(document.querySelector('#docTitle').value || session.title)}.md`, markdownGuide(), 'text/markdown'));
-document.querySelector('#exportText')?.addEventListener('click', () => download(`${slug(document.querySelector('#docTitle').value || session.title)}.txt`, textGuide(), 'text/plain'));
+document.querySelector('#playwright')?.addEventListener('click', () => session && download(`${slug(session.title)}.spec.ts`, playwright(session), 'text/typescript'));
+document.querySelector('#devtools')?.addEventListener('click', () => session && download(`${slug(session.title)}.devtools.json`, devtools(session), 'application/json'));
+document.querySelector('#exportHtml')?.addEventListener('click', () => session && download(`${slug(document.querySelector('#docTitle').value || session.title)}.html`, htmlGuide(), 'text/html'));
+document.querySelector('#exportMarkdown')?.addEventListener('click', () => session && download(`${slug(document.querySelector('#docTitle').value || session.title)}.md`, markdownGuide(), 'text/markdown'));
+document.querySelector('#exportText')?.addEventListener('click', () => session && download(`${slug(document.querySelector('#docTitle').value || session.title)}.txt`, textGuide(), 'text/plain'));
