@@ -28,21 +28,29 @@ using the browser's built-in Web Speech API.
 
 After editing the workflow, use the buttons on the review tab to export it.
 
-## Formatting the workflow before export
+## The review page
 
-The review tab lists every recorded step with its screenshot, an editable title, and an editable
-description (pre-filled from whatever was transcribed near that step, if anything was said). From
-there you can:
+**Recordings sidebar.** Every completed recording is saved to a local library (`chrome.storage.local`,
+capped at the 50 most recent — older ones are pruned automatically) and listed on the left, newest
+first, with step count and file size. Click any entry to load it back into the editor; the **×** that
+appears on hover deletes it. Nothing here ever leaves the browser.
 
-- Rewrite any step's title or narration
-- Reorder steps with the ↑ / ↓ buttons
-- Remove steps that shouldn't appear in the guide
-- Set the guide's title, intro paragraph and outro paragraph
+**Formatting a step.** Each step shows a large screenshot — click it to open a full-size zoom view — an
+action badge (`CLICK`, `FILL`, `SELECT`, …), an editable title, and an editable narration (pre-filled
+from whatever was transcribed near that step, if anything was said). Below that:
 
-Then export with **Export HTML Guide**, **Export Markdown**, or **Export Text** — all three follow the
-same structure: a title, an intro, one section per step (step number, title, narration, screenshot),
-and an outro. **Export Playwright** and **Export DevTools JSON** turn the same recorded actions into
-automation scripts instead.
+- **Sensitive** — check this to redact the step's captured value (`<REDACTED>`) in every export,
+  the same way password/credit-card fields are redacted automatically during recording.
+- **URL** — the page (or iframe) the action happened on.
+- **Locator** (collapsible) — the CSS-ish selector the recorder captured, plus the element's
+  accessible name/tag when available.
+
+Reorder steps with **Move up** / **Move down**, or **Delete** ones that shouldn't appear in the guide.
+Above the step list, set the guide's title, intro paragraph and outro paragraph.
+
+**Exporting.** **Export HTML Guide** is the primary action; **More formats** opens Markdown, Text,
+Playwright, and DevTools JSON. The HTML/Markdown/Text guides all follow the same structure: a title, an
+intro, one section per step (step number, title, narration, screenshot), and an outro.
 
 ## Current scope
 
