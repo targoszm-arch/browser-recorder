@@ -35,13 +35,19 @@ capped at the 50 most recent — older ones are pruned automatically) and listed
 first, with step count and file size. Click any entry to load it back into the editor; the **×** that
 appears on hover deletes it. Nothing here ever leaves the browser.
 
-**Formatting a step.** Each step shows a large screenshot — click it to open a full-size zoom view, or
+**Formatting a step.** Each step shows a large screenshot — click it to open a zoom-and-annotate view, or
 click **Upload image** / **Replace image** to swap in your own file instead (nothing is uploaded
 anywhere; it's read locally and embedded the same way a captured screenshot is) — an action badge
 (`CLICK`, `FILL`, `SELECT`, …), an editable title, and an editable narration. The title defaults to the
 first sentence of whatever was said near that step, if anything was; only when there's no narration does
 it fall back to a mechanical description built from the action (e.g. "Click the button"), and it never
 surfaces the raw recorded selector. Below that:
+
+**Annotating a screenshot.** Clicking a step's screenshot opens it in a full-size view with a markup
+toolbar: pen, highlighter, rectangle, arrow, and text, each with a color picker and line-width choice,
+plus Undo and Clear. Nothing is written back to the step until you click **Save annotation** — closing
+the view any other way (×, Escape, or clicking outside the image) discards the drawing and leaves the
+original screenshot untouched.
 
 - **Sensitive** — check this to redact the step's captured value (`<REDACTED>`) in every export,
   the same way password/credit-card fields are redacted automatically during recording.

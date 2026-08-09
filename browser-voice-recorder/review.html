@@ -42,8 +42,32 @@
   </main>
 </div>
 <div id="lightbox" class="lightbox hidden">
-  <button id="lightboxClose" class="lightbox-close" aria-label="Close">×</button>
-  <img id="lightboxImg" alt="">
+  <button id="lightboxClose" class="lightbox-close" aria-label="Close without saving">×</button>
+  <div class="lightbox-toolbar">
+    <div class="tool-group">
+      <button type="button" class="tool-btn active" data-tool="pen" title="Pen">✏️</button>
+      <button type="button" class="tool-btn" data-tool="highlighter" title="Highlighter">🖍️</button>
+      <button type="button" class="tool-btn" data-tool="rect" title="Rectangle">▭</button>
+      <button type="button" class="tool-btn" data-tool="arrow" title="Arrow">↗️</button>
+      <button type="button" class="tool-btn" data-tool="text" title="Text">Aa</button>
+    </div>
+    <div class="tool-group">
+      <input type="color" id="annotationColor" value="#ff3b30" title="Color">
+      <select id="annotationWidth" title="Line width">
+        <option value="2">Thin</option>
+        <option value="4" selected>Medium</option>
+        <option value="8">Thick</option>
+      </select>
+    </div>
+    <div class="tool-group">
+      <button type="button" id="annotationUndo" class="secondary">Undo</button>
+      <button type="button" id="annotationClear" class="secondary">Clear</button>
+    </div>
+    <button type="button" id="annotationSave" class="primary">Save annotation</button>
+  </div>
+  <div class="lightbox-canvas-wrap">
+    <canvas id="lightboxCanvas"></canvas>
+  </div>
 </div>
 <input type="file" id="stepImageInput" accept="image/*" class="visually-hidden">
 <script src="review.js"></script></body></html>
