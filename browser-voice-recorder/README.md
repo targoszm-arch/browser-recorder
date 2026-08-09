@@ -35,9 +35,13 @@ capped at the 50 most recent — older ones are pruned automatically) and listed
 first, with step count and file size. Click any entry to load it back into the editor; the **×** that
 appears on hover deletes it. Nothing here ever leaves the browser.
 
-**Formatting a step.** Each step shows a large screenshot — click it to open a full-size zoom view — an
-action badge (`CLICK`, `FILL`, `SELECT`, …), an editable title, and an editable narration (pre-filled
-from whatever was transcribed near that step, if anything was said). Below that:
+**Formatting a step.** Each step shows a large screenshot — click it to open a full-size zoom view, or
+click **Upload image** / **Replace image** to swap in your own file instead (nothing is uploaded
+anywhere; it's read locally and embedded the same way a captured screenshot is) — an action badge
+(`CLICK`, `FILL`, `SELECT`, …), an editable title, and an editable narration. The title defaults to the
+first sentence of whatever was said near that step, if anything was; only when there's no narration does
+it fall back to a mechanical description built from the action (e.g. "Click the button"), and it never
+surfaces the raw recorded selector. Below that:
 
 - **Sensitive** — check this to redact the step's captured value (`<REDACTED>`) in every export,
   the same way password/credit-card fields are redacted automatically during recording.
@@ -45,12 +49,16 @@ from whatever was transcribed near that step, if anything was said). Below that:
 - **Locator** (collapsible) — the CSS-ish selector the recorder captured, plus the element's
   accessible name/tag when available.
 
-Reorder steps with **Move up** / **Move down**, or **Delete** ones that shouldn't appear in the guide.
-Above the step list, set the guide's title, intro paragraph and outro paragraph.
+Reorder steps with **Move up** / **Move down**, or **Delete** ones that shouldn't appear in the export —
+do this before exporting or generating a bug report, since both are built from the current step list.
 
-**Exporting.** **Export HTML Guide** is the primary action; **More formats** opens Markdown, Text,
-Playwright, and DevTools JSON. The HTML/Markdown/Text guides all follow the same structure: a title, an
-intro, one section per step (step number, title, narration, screenshot), and an outro.
+**Exporting.** Above the step list, choose **Export as**: **Step-by-step guide** (title, intro, one
+section per step, outro) or **Bug report** (Description of the bug, an auto-numbered Steps to Reproduce
+built from the current step titles, and Expected behavior). The bug report's Description field is
+pre-filled by joining all narration captured during the recording — edit it freely. **Export HTML** is
+the primary action; **More formats** opens Markdown, Text, Playwright, and DevTools JSON — all of which
+follow whichever export type is currently selected (Playwright/DevTools JSON are automation scripts and
+are unaffected by it).
 
 ## Current scope
 
@@ -78,7 +86,8 @@ captured. Usually one of:
 ## Production hardening backlog
 
 - IndexedDB session store and recovery after service-worker restart
-- File upload, drag/drop, native dialog and shadow-DOM handling
+- Recording through native OS file-picker dialogs, drag/drop, and shadow-DOM interactions on the
+  target page (unrelated to the review page's manual screenshot upload, which already works)
 - Locator scoring with role/text/test-id fallbacks
 - Drag-and-drop step reordering and thumbnail re-cropping in the review UI
 - Automated Chrome Web Store packaging, privacy disclosures and end-to-end tests
