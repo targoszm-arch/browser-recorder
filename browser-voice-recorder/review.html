@@ -8,7 +8,7 @@
     <header>
       <div><h1 id="title">Recording</h1><p id="meta" class="muted"></p></div>
       <div class="exports">
-        <button id="exportHtml" class="primary">Export HTML Guide</button>
+        <button id="exportHtml" class="primary">Export HTML</button>
         <div class="dropdown">
           <button id="moreFormatsBtn" class="chip">More formats <span class="caret">▾</span></button>
           <div id="moreFormatsMenu" class="dropdown-menu hidden">
@@ -21,20 +21,53 @@
       </div>
     </header>
     <section class="card" id="formatting">
-      <h2>Format the guide</h2>
-      <label>Guide title<input type="text" id="docTitle" placeholder="Workflow title"></label>
-      <label>Intro paragraph<textarea id="docIntro" rows="2"></textarea></label>
-      <label>Outro paragraph<textarea id="docOutro" rows="2"></textarea></label>
+      <h2>Format the export</h2>
+      <label>Title<input type="text" id="docTitle" placeholder="Workflow title"></label>
+      <label>Export as
+        <select id="docType">
+          <option value="guide">Step-by-step guide</option>
+          <option value="bug-report">Bug report</option>
+        </select>
+      </label>
+      <label>Intro paragraph <span class="hint">(used by the step-by-step guide)</span><textarea id="docIntro" rows="2"></textarea></label>
+      <label>Outro paragraph <span class="hint">(used by the step-by-step guide)</span><textarea id="docOutro" rows="2"></textarea></label>
+      <label>Description of the bug <span class="hint">(auto-filled from narration, used by the bug report)</span><textarea id="bugDescription" rows="3"></textarea></label>
+      <label>Expected behavior <span class="hint">(used by the bug report)</span><textarea id="bugExpected" rows="2" placeholder="What should have happened instead?"></textarea></label>
     </section>
     <section class="card">
       <h2>Steps</h2>
-      <p class="muted">Each step's screenshot was captured automatically. Click a screenshot to enlarge it. Edit the title and narration, reorder or remove steps, then export.</p>
+      <p class="muted">Each step's screenshot was captured automatically — click one to enlarge it, or upload your own to replace it. Edit the title and narration, reorder or remove steps, then export. "Steps to Reproduce" in the bug report is generated from this list.</p>
       <ol id="steps"></ol>
     </section>
   </main>
 </div>
 <div id="lightbox" class="lightbox hidden">
-  <button id="lightboxClose" class="lightbox-close" aria-label="Close">×</button>
-  <img id="lightboxImg" alt="">
+  <button id="lightboxClose" class="lightbox-close" aria-label="Close without saving">×</button>
+  <div class="lightbox-toolbar">
+    <div class="tool-group">
+      <button type="button" class="tool-btn active" data-tool="pen" title="Pen">✏️</button>
+      <button type="button" class="tool-btn" data-tool="highlighter" title="Highlighter">🖍️</button>
+      <button type="button" class="tool-btn" data-tool="rect" title="Rectangle">▭</button>
+      <button type="button" class="tool-btn" data-tool="arrow" title="Arrow">↗️</button>
+      <button type="button" class="tool-btn" data-tool="text" title="Text">Aa</button>
+    </div>
+    <div class="tool-group">
+      <input type="color" id="annotationColor" value="#ff3b30" title="Color">
+      <select id="annotationWidth" title="Line width">
+        <option value="2">Thin</option>
+        <option value="4" selected>Medium</option>
+        <option value="8">Thick</option>
+      </select>
+    </div>
+    <div class="tool-group">
+      <button type="button" id="annotationUndo" class="secondary">Undo</button>
+      <button type="button" id="annotationClear" class="secondary">Clear</button>
+    </div>
+    <button type="button" id="annotationSave" class="primary">Save annotation</button>
+  </div>
+  <div class="lightbox-canvas-wrap">
+    <canvas id="lightboxCanvas"></canvas>
+  </div>
 </div>
+<input type="file" id="stepImageInput" accept="image/*" class="visually-hidden">
 <script src="review.js"></script></body></html>

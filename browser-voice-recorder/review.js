@@ -1,6 +1,7 @@
 let session = null;
 let libraryIndex = [];
 let latestSessionId = null;
+let pendingUploadIndex = null;
 
 const q = (value) => JSON.stringify(value ?? '');
 const slug = (value) => (value || 'workflow').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
@@ -45,8 +46,10 @@ function devtools(s) {
   return JSON.stringify({ title: s.title, steps }, null, 2);
 }
 
+// Never surface the raw recorded selector in a human-facing title — a nameless element falls
+// back to its tag ("the button") rather than dumping something like "div > div:nth-of-type(6)".
 function labelOf(step) {
-  return step.name || step.selector || effectiveValue(step) || step.tag || 'this element';
+  return step.name || effectiveValue(step) || (step.tag ? `the ${step.tag}` : 'an element');
 }
 
 function autoTitle(step) {
@@ -60,6 +63,20 @@ function autoTitle(step) {
     case 'navigate': return `Navigate to ${step.value}.`;
     default: return `Interact with ${labelOf(step)}.`;
   }
+}
+
+// Prefer a title derived from what was actually said over the mechanical action description —
+// narration reads like "click the close icon to exit settings", which is a far better title than
+// a selector-based fallback could ever produce.
+function titleFromNarration(narration) {
+  const trimmed = (narration || '').trim();
+  if (!trimmed) return null;
+  const firstSentence = trimmed.split(/(?<=[.!?])\s+/)[0];
+  return firstSentence.length > 100 ? `${firstSentence.slice(0, 97).trim()}…` : firstSentence;
+}
+
+function defaultTitleFor(step, narration) {
+  return titleFromNarration(narration) || autoTitle(step);
 }
 
 // The narration transcript is timestamped speech-to-text picked up while the user talked
@@ -80,14 +97,15 @@ function render() {
   const list = document.querySelector('#steps');
   const total = session.steps.length;
   list.innerHTML = session.steps.map((step, i) => {
-    const title = step.editTitle ?? (step.editTitle = autoTitle(step));
     const desc = step.editDesc ?? (step.editDesc = narrationFor(step, i));
+    const title = step.editTitle ?? (step.editTitle = defaultTitleFor(step, desc));
     return `
     <li class="step-edit" data-index="${i}">
       <div class="step-shot">
         ${step.screenshot
           ? `<img class="zoomable" src="${step.screenshot}" alt="${escapeHtml(title)}"><span class="zoom-hint">🔍 Click to enlarge</span>`
           : `<div class="no-shot">No screenshot</div>`}
+        <button type="button" class="upload-shot" data-act="upload">⤴ ${step.screenshot ? 'Replace image' : 'Upload image'}</button>
       </div>
       <div class="step-body">
         <div class="step-eyebrow">
@@ -127,8 +145,18 @@ function bindListEvents() {
     if (e.target.classList.contains('step-sensitive')) step.sensitive = e.target.checked;
   });
   list.addEventListener('click', (e) => {
+    const uploadBtn = e.target.closest('.upload-shot');
+    if (uploadBtn) {
+      pendingUploadIndex = Number(uploadBtn.closest('.step-edit').dataset.index);
+      document.querySelector('#stepImageInput').click();
+      return;
+    }
     const img = e.target.closest('img.zoomable');
-    if (img) { openLightbox(img.src, img.alt); return; }
+    if (img) {
+      const index = Number(img.closest('.step-edit').dataset.index);
+      openLightbox(session.steps[index].screenshot, img.alt, index);
+      return;
+    }
     const button = e.target.closest('button[data-act]');
     if (!button) return;
     const li = button.closest('.step-edit');
@@ -140,21 +168,196 @@ function bindListEvents() {
   });
 }
 
-function openLightbox(src, alt) {
-  document.querySelector('#lightboxImg').src = src;
-  document.querySelector('#lightboxImg').alt = alt || '';
+// --- Manual screenshot upload (replaces or fills in a step's image; recording itself never
+// prompts for this — it's an explicit edit made from the review page) ---
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+function bindImageUpload() {
+  document.querySelector('#stepImageInput').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file || pendingUploadIndex == null || !session) return;
+    session.steps[pendingUploadIndex].screenshot = await fileToDataUrl(file);
+    pendingUploadIndex = null;
+    render();
+  });
+}
+
+// --- Zoom + annotation lightbox. Opens on a screenshot click; annotations only ever touch the
+// step's screenshot when "Save annotation" is clicked — closing any other way discards them. ---
+
+let lightboxStepIndex = null;
+let annotationHistory = [];
+let annotationBaseImage = null;
+let annotationTool = 'pen';
+let annotationColor = '#ff3b30';
+let annotationWidth = 4;
+let annotationDrawing = false;
+let annotationDragStart = null;
+let annotationCurrentStroke = null;
+
+function openLightbox(src, alt, index) {
+  lightboxStepIndex = index ?? null;
+  annotationHistory = [];
+  annotationBaseImage = null;
   document.querySelector('#lightbox').classList.remove('hidden');
+  const img = new Image();
+  img.onload = () => {
+    annotationBaseImage = img;
+    const canvas = document.querySelector('#lightboxCanvas');
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    canvas.setAttribute('aria-label', alt || '');
+    redrawAnnotationCanvas();
+  };
+  img.src = src;
 }
 
 function closeLightbox() {
   document.querySelector('#lightbox').classList.add('hidden');
-  document.querySelector('#lightboxImg').src = '';
+  lightboxStepIndex = null;
+  annotationHistory = [];
+  annotationBaseImage = null;
+}
+
+function redrawAnnotationCanvas(preview) {
+  const canvas = document.querySelector('#lightboxCanvas');
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (annotationBaseImage) ctx.drawImage(annotationBaseImage, 0, 0, canvas.width, canvas.height);
+  for (const item of annotationHistory) drawAnnotationItem(ctx, item);
+  if (preview) drawAnnotationItem(ctx, preview);
+}
+
+function drawAnnotationItem(ctx, item) {
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.globalAlpha = 1;
+  if (item.type === 'pen' || item.type === 'highlighter') {
+    ctx.strokeStyle = item.color;
+    ctx.lineWidth = item.width;
+    ctx.globalAlpha = item.type === 'highlighter' ? 0.35 : 1;
+    ctx.beginPath();
+    item.points.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  } else if (item.type === 'rect') {
+    ctx.strokeStyle = item.color;
+    ctx.lineWidth = item.width;
+    ctx.strokeRect(item.x, item.y, item.w, item.h);
+  } else if (item.type === 'arrow') {
+    drawAnnotationArrow(ctx, item);
+  } else if (item.type === 'text') {
+    ctx.fillStyle = item.color;
+    ctx.font = `700 ${item.size}px -apple-system, BlinkMacSystemFont, sans-serif`;
+    ctx.textBaseline = 'top';
+    ctx.fillText(item.text, item.x, item.y);
+  }
+}
+
+function drawAnnotationArrow(ctx, { x1, y1, x2, y2, color, width }) {
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineWidth = width;
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+  const angle = Math.atan2(y2 - y1, x2 - x1);
+  const headLen = Math.max(12, width * 3);
+  ctx.beginPath();
+  ctx.moveTo(x2, y2);
+  ctx.lineTo(x2 - headLen * Math.cos(angle - Math.PI / 6), y2 - headLen * Math.sin(angle - Math.PI / 6));
+  ctx.lineTo(x2 - headLen * Math.cos(angle + Math.PI / 6), y2 - headLen * Math.sin(angle + Math.PI / 6));
+  ctx.closePath();
+  ctx.fill();
+}
+
+function annotationCanvasPoint(e) {
+  const canvas = document.querySelector('#lightboxCanvas');
+  const rect = canvas.getBoundingClientRect();
+  return [(e.clientX - rect.left) * (canvas.width / rect.width), (e.clientY - rect.top) * (canvas.height / rect.height)];
+}
+
+function placeTextAnnotation(x, y) {
+  const text = window.prompt('Annotation text:');
+  if (!text || !text.trim()) return;
+  annotationHistory.push({ type: 'text', color: annotationColor, size: Math.max(18, annotationWidth * 6), text: text.trim(), x, y });
+  redrawAnnotationCanvas();
+}
+
+function bindAnnotationCanvas() {
+  const canvas = document.querySelector('#lightboxCanvas');
+  canvas.addEventListener('pointerdown', (e) => {
+    const [x, y] = annotationCanvasPoint(e);
+    if (annotationTool === 'text') { placeTextAnnotation(x, y); return; }
+    annotationDrawing = true;
+    annotationDragStart = [x, y];
+    if (annotationTool === 'pen' || annotationTool === 'highlighter') {
+      annotationCurrentStroke = { type: annotationTool, color: annotationColor, width: annotationWidth, points: [[x, y]] };
+    }
+    canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!annotationDrawing) return;
+    const [x, y] = annotationCanvasPoint(e);
+    if (annotationTool === 'pen' || annotationTool === 'highlighter') {
+      annotationCurrentStroke.points.push([x, y]);
+      redrawAnnotationCanvas(annotationCurrentStroke);
+    } else if (annotationTool === 'rect') {
+      annotationCurrentStroke = {
+        type: 'rect', color: annotationColor, width: annotationWidth,
+        x: Math.min(annotationDragStart[0], x), y: Math.min(annotationDragStart[1], y),
+        w: Math.abs(x - annotationDragStart[0]), h: Math.abs(y - annotationDragStart[1]),
+      };
+      redrawAnnotationCanvas(annotationCurrentStroke);
+    } else if (annotationTool === 'arrow') {
+      annotationCurrentStroke = { type: 'arrow', color: annotationColor, width: annotationWidth, x1: annotationDragStart[0], y1: annotationDragStart[1], x2: x, y2: y };
+      redrawAnnotationCanvas(annotationCurrentStroke);
+    }
+  });
+  canvas.addEventListener('pointerup', () => {
+    if (!annotationDrawing) return;
+    annotationDrawing = false;
+    if (annotationCurrentStroke) { annotationHistory.push(annotationCurrentStroke); annotationCurrentStroke = null; }
+    redrawAnnotationCanvas();
+  });
+}
+
+function saveAnnotation() {
+  if (lightboxStepIndex == null || !session) { closeLightbox(); return; }
+  const canvas = document.querySelector('#lightboxCanvas');
+  session.steps[lightboxStepIndex].screenshot = canvas.toDataURL('image/jpeg', 0.92);
+  closeLightbox();
+  render();
 }
 
 function bindLightbox() {
   document.querySelector('#lightboxClose').addEventListener('click', closeLightbox);
-  document.querySelector('#lightbox').addEventListener('click', (e) => { if (e.target.id === 'lightbox') closeLightbox(); });
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeLightbox(); });
+  document.querySelector('#lightbox').addEventListener('click', (e) => {
+    if (e.target.id === 'lightbox' || e.target.classList.contains('lightbox-canvas-wrap')) closeLightbox();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !document.querySelector('#lightbox').classList.contains('hidden')) closeLightbox();
+  });
+  document.querySelectorAll('.tool-btn').forEach((btn) => btn.addEventListener('click', () => {
+    annotationTool = btn.dataset.tool;
+    document.querySelectorAll('.tool-btn').forEach((b) => b.classList.toggle('active', b === btn));
+  }));
+  document.querySelector('#annotationColor').addEventListener('input', (e) => { annotationColor = e.target.value; });
+  document.querySelector('#annotationWidth').addEventListener('change', (e) => { annotationWidth = Number(e.target.value); });
+  document.querySelector('#annotationUndo').addEventListener('click', () => { annotationHistory.pop(); redrawAnnotationCanvas(); });
+  document.querySelector('#annotationClear').addEventListener('click', () => { annotationHistory = []; redrawAnnotationCanvas(); });
+  document.querySelector('#annotationSave').addEventListener('click', saveAnnotation);
+  bindAnnotationCanvas();
 }
 
 function bindFormatsMenu() {
@@ -219,6 +422,8 @@ async function selectSession(id) {
   document.querySelector('#formatting').style.display = '';
   document.querySelector('#docIntro').value = `Follow these steps to complete: ${session.title}.`;
   document.querySelector('#docOutro').value = `You've successfully completed ${session.title}.`;
+  document.querySelector('#bugDescription').value = (session.transcript || []).map((t) => t.text).join(' ').trim();
+  document.querySelector('#bugExpected').value = '';
   render();
   renderLibrary();
 }
@@ -231,28 +436,32 @@ function showEmptyState() {
   document.querySelector('#steps').innerHTML = '';
 }
 
-function htmlGuide() {
-  const { title, intro, outro, steps } = docParts();
-  const stepHtml = steps.map((step, i) => `
-<div class="step">
-  <div class="step-header">
-    <span class="step-number">${i + 1}</span>
-    <div>
-      <div class="step-label">Step ${i + 1} of ${steps.length}</div>
-      <h2 class="step-title">${escapeHtml(step.title)}</h2>
-    </div>
-  </div>
-  ${step.description ? `<p class="step-description">${escapeHtml(step.description)}</p>` : ''}
-  ${step.screenshot ? `<img src="${step.screenshot}" alt="${escapeHtml(step.title)}" />` : ''}
-</div>`).join('\n');
+// --- Shared export document parts ---
 
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>${escapeHtml(title)}</title>
-<style>
+function docParts() {
+  const title = document.querySelector('#docTitle').value.trim() || session.title;
+  const intro = document.querySelector('#docIntro').value.trim();
+  const outro = document.querySelector('#docOutro').value.trim();
+  const steps = session.steps.map((step) => ({
+    title: step.editTitle || defaultTitleFor(step, step.editDesc),
+    description: step.editDesc || '',
+    screenshot: step.screenshot || null,
+  }));
+  return { title, intro, outro, steps };
+}
+
+function bugReportParts() {
+  const title = document.querySelector('#docTitle').value.trim() || session.title;
+  const description = document.querySelector('#bugDescription').value.trim();
+  const expected = document.querySelector('#bugExpected').value.trim();
+  const steps = session.steps.map((step) => ({
+    title: step.editTitle || defaultTitleFor(step, step.editDesc),
+    screenshot: step.screenshot || null,
+  }));
+  return { title, description, expected, steps };
+}
+
+const EXPORT_STYLE = `
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
@@ -296,21 +505,22 @@ function htmlGuide() {
     text-align: center; margin-top: 40px; padding-top: 20px;
     border-top: 1px solid #e8e8ec; font-size: 12px; color: #aaa;
   }
-</style>
+`;
+
+function htmlDocument(title, subtitle, bodyHtml) {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>${escapeHtml(title)}</title>
+<style>${EXPORT_STYLE}</style>
 </head>
 <body>
 <div class="container">
   <h1>${escapeHtml(title)}</h1>
-  <p class="subtitle">${steps.length} steps</p>
-${intro ? `<div class="intro">
-  <h2>${escapeHtml(title)}</h2>
-  <p>${escapeHtml(intro)}</p>
-</div>` : ''}
-${stepHtml}
-${outro ? `<div class="outro">
-  <h2>You're all set!</h2>
-  <p>${escapeHtml(outro)}</p>
-</div>` : ''}
+  <p class="subtitle">${escapeHtml(subtitle)}</p>
+${bodyHtml}
   <div class="footer">Generated with Workflow Voice Recorder</div>
 </div>
 </body>
@@ -318,16 +528,48 @@ ${outro ? `<div class="outro">
 `;
 }
 
-function docParts() {
-  const title = document.querySelector('#docTitle').value.trim() || session.title;
-  const intro = document.querySelector('#docIntro').value.trim();
-  const outro = document.querySelector('#docOutro').value.trim();
-  const steps = session.steps.map((step) => ({
-    title: step.editTitle || autoTitle(step),
-    description: step.editDesc || '',
-    screenshot: step.screenshot || null,
-  }));
-  return { title, intro, outro, steps };
+function stepCardsHtml(steps, { withDescription } = {}) {
+  return steps.map((step, i) => `
+<div class="step">
+  <div class="step-header">
+    <span class="step-number">${i + 1}</span>
+    <div>
+      <div class="step-label">Step ${i + 1} of ${steps.length}</div>
+      <h2 class="step-title">${escapeHtml(step.title)}</h2>
+    </div>
+  </div>
+  ${withDescription && step.description ? `<p class="step-description">${escapeHtml(step.description)}</p>` : ''}
+  ${step.screenshot ? `<img src="${step.screenshot}" alt="${escapeHtml(step.title)}" />` : ''}
+</div>`).join('\n');
+}
+
+function htmlGuide() {
+  const { title, intro, outro, steps } = docParts();
+  const body = `${intro ? `<div class="intro">
+  <h2>${escapeHtml(title)}</h2>
+  <p>${escapeHtml(intro)}</p>
+</div>` : ''}
+${stepCardsHtml(steps, { withDescription: true })}
+${outro ? `<div class="outro">
+  <h2>You're all set!</h2>
+  <p>${escapeHtml(outro)}</p>
+</div>` : ''}`;
+  return htmlDocument(title, `${steps.length} steps`, body);
+}
+
+function htmlBugReport() {
+  const { title, description, expected, steps } = bugReportParts();
+  const body = `${description ? `<div class="intro">
+  <h2>Description of the bug</h2>
+  <p>${escapeHtml(description)}</p>
+</div>` : ''}
+<div class="intro"><h2>Steps to Reproduce</h2></div>
+${stepCardsHtml(steps, { withDescription: false })}
+${expected ? `<div class="outro">
+  <h2>Expected behavior</h2>
+  <p>${escapeHtml(expected)}</p>
+</div>` : ''}`;
+  return htmlDocument(title, `Bug report · ${steps.length} repro steps`, body);
 }
 
 function markdownGuide() {
@@ -340,6 +582,20 @@ function markdownGuide() {
     if (step.screenshot) lines.push(`![${step.title}](${step.screenshot})`, '');
   });
   if (outro) lines.push('---', '', `## You're all set!`, '', outro, '');
+  return lines.join('\n');
+}
+
+function markdownBugReport() {
+  const { title, description, expected, steps } = bugReportParts();
+  const lines = [`# ${title}`, ''];
+  if (description) lines.push('## Description of the bug', '', description, '');
+  lines.push('## Steps to Reproduce', '');
+  steps.forEach((step, i) => {
+    lines.push(`${i + 1}. ${step.title}`);
+    if (step.screenshot) lines.push('', `   ![${step.title}](${step.screenshot})`);
+    lines.push('');
+  });
+  if (expected) lines.push('## Expected behavior', '', expected, '');
   return lines.join('\n');
 }
 
@@ -358,6 +614,25 @@ function textGuide() {
   return lines.join('\n');
 }
 
+function textBugReport() {
+  const { title, description, expected, steps } = bugReportParts();
+  const rule = (text, char) => char.repeat(text.length);
+  const lines = [title, rule(title, '='), ''];
+  if (description) lines.push('Description of the bug', rule('Description of the bug', '-'), '', description, '');
+  lines.push('Steps to Reproduce', rule('Steps to Reproduce', '-'), '');
+  steps.forEach((step, i) => {
+    lines.push(`${i + 1}. ${step.title}`);
+    if (step.screenshot) lines.push(`   Screenshot: ${step.screenshot}`);
+  });
+  lines.push('');
+  if (expected) lines.push('Expected behavior', rule('Expected behavior', '-'), '', expected, '');
+  return lines.join('\n');
+}
+
+function currentDocType() {
+  return document.querySelector('#docType').value;
+}
+
 async function download(filename, body, mime) {
   const blob = new Blob([body], { type: mime });
   const url = URL.createObjectURL(blob);
@@ -370,6 +645,7 @@ async function download(filename, body, mime) {
   bindLibraryEvents();
   bindLightbox();
   bindFormatsMenu();
+  bindImageUpload();
   await loadLibrary();
   if (libraryIndex.length) {
     const preferred = latestSessionId && libraryIndex.some((e) => e.id === latestSessionId) ? latestSessionId : libraryIndex[0].id;
@@ -381,6 +657,18 @@ async function download(filename, body, mime) {
 
 document.querySelector('#playwright')?.addEventListener('click', () => session && download(`${slug(session.title)}.spec.ts`, playwright(session), 'text/typescript'));
 document.querySelector('#devtools')?.addEventListener('click', () => session && download(`${slug(session.title)}.devtools.json`, devtools(session), 'application/json'));
-document.querySelector('#exportHtml')?.addEventListener('click', () => session && download(`${slug(document.querySelector('#docTitle').value || session.title)}.html`, htmlGuide(), 'text/html'));
-document.querySelector('#exportMarkdown')?.addEventListener('click', () => session && download(`${slug(document.querySelector('#docTitle').value || session.title)}.md`, markdownGuide(), 'text/markdown'));
-document.querySelector('#exportText')?.addEventListener('click', () => session && download(`${slug(document.querySelector('#docTitle').value || session.title)}.txt`, textGuide(), 'text/plain'));
+document.querySelector('#exportHtml')?.addEventListener('click', () => session && download(
+  `${slug(document.querySelector('#docTitle').value || session.title)}.html`,
+  currentDocType() === 'bug-report' ? htmlBugReport() : htmlGuide(),
+  'text/html'
+));
+document.querySelector('#exportMarkdown')?.addEventListener('click', () => session && download(
+  `${slug(document.querySelector('#docTitle').value || session.title)}.md`,
+  currentDocType() === 'bug-report' ? markdownBugReport() : markdownGuide(),
+  'text/markdown'
+));
+document.querySelector('#exportText')?.addEventListener('click', () => session && download(
+  `${slug(document.querySelector('#docTitle').value || session.title)}.txt`,
+  currentDocType() === 'bug-report' ? textBugReport() : textGuide(),
+  'text/plain'
+));
