@@ -89,6 +89,15 @@ captured. Usually one of:
 - You recorded on a `chrome://`, `chrome-extension://`, or Chrome Web Store page — these are off-limits
   to content scripts by design; use a normal `http(s)://` page.
 
+**The popup still shows "Stop and export" but nothing is happening / the recording seems dead.**
+During long recordings the in-progress session is checkpointed to storage every ~4 seconds (not on
+every single click, which used to re-write the entire growing session — including every screenshot so
+far — on every step and could make the extension unresponsive well before a session got long). If
+recording state still looks stuck — e.g. after the recorded tab crashed, or anything else went
+wrong — open the popup and click **Recorder stuck? Force stop & save** (only shown while a recording is
+active). It saves whatever was captured to your recordings library and fully resets state, no browser
+refresh required. Closing the recorded tab itself also now triggers this automatically.
+
 ## Production hardening backlog
 
 - IndexedDB session store and recovery after service-worker restart
